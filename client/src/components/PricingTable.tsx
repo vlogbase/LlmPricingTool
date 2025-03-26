@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,9 +32,29 @@ export function PricingTable({ canEdit }: PricingTableProps) {
   const [editedPrices, setEditedPrices] = useState<Record<string, number>>({});
   const [sortOption, setSortOption] = useState<SortOption>("default");
   
-  const { data: models, isLoading, isError, error } = useQuery<ModelPrice[]>({
+  const { data: modelsData, isLoading, isError, error } = useQuery<ModelPrice[]>({
     queryKey: ['/api/model-prices'],
   });
+  
+  // Sort models based on selected sort option
+  const sortedModels = React.useMemo(() => {
+    if (!modelsData) return [];
+    
+    const models = [...modelsData];
+    
+    switch (sortOption) {
+      case "columnA-asc":
+        return models.sort((a, b) => a.openRouterPrice - b.openRouterPrice);
+      case "columnA-desc":
+        return models.sort((a, b) => b.openRouterPrice - a.openRouterPrice);
+      case "columnC-asc":
+        return models.sort((a, b) => a.actualPrice - b.actualPrice);
+      case "columnC-desc":
+        return models.sort((a, b) => b.actualPrice - a.actualPrice);
+      default:
+        return models; // Default order (as returned from API)
+    }
+  }, [modelsData, sortOption]);
 
   const refreshMutation = useMutation({
     mutationFn: async () => {
@@ -170,30 +190,48 @@ export function PricingTable({ canEdit }: PricingTableProps) {
 
   return (
     <Card className="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-      <CardHeader className="px-4 py-5 sm:px-6 flex justify-between items-center">
-        <div>
+      <CardHeader className="px-4 py-5 sm:px-6 flex flex-col sm:flex-row sm:items-center">
+        <div className="flex-1">
           <CardTitle className="text-lg leading-6 font-medium text-neutral-900">LLM Pricing Table</CardTitle>
           <p className="mt-1 max-w-2xl text-sm text-neutral-500">All prices shown in USD per million tokens.</p>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm"
-          onClick={() => refreshMutation.mutate()}
-          disabled={refreshMutation.isPending}
-          className="text-primary-700 bg-primary-light hover:bg-primary-light"
-        >
-          {refreshMutation.isPending ? (
-            <>
-              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-              Refreshing...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="h-4 w-4 mr-1" />
-              Refresh Prices
-            </>
+        <div className="flex items-center space-x-2 mt-4 sm:mt-0">
+          {canEdit && (
+            <div className="mr-2">
+              <Select value={sortOption} onValueChange={(value) => setSortOption(value as SortOption)}>
+                <SelectTrigger className="h-9 w-[180px]">
+                  <SelectValue placeholder="Sort By" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default Order</SelectItem>
+                  <SelectItem value="columnA-asc">Column A (Low to High)</SelectItem>
+                  <SelectItem value="columnA-desc">Column A (High to Low)</SelectItem>
+                  <SelectItem value="columnC-asc">Column C (Low to High)</SelectItem>
+                  <SelectItem value="columnC-desc">Column C (High to Low)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           )}
-        </Button>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => refreshMutation.mutate()}
+            disabled={refreshMutation.isPending}
+            className="text-primary-700 bg-primary-light hover:bg-primary-light"
+          >
+            {refreshMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Refresh Prices
+              </>
+            )}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
@@ -201,13 +239,25 @@ export function PricingTable({ canEdit }: PricingTableProps) {
             <thead className="bg-neutral-50">
               <tr>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Model</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Column A<br/><span className="font-normal normal-case">OpenRouter Price</span></th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider cursor-pointer" onClick={() => setSortOption(sortOption === "columnA-asc" ? "columnA-desc" : "columnA-asc")}>
+                  Column A
+                  {sortOption === "columnA-asc" && <ChevronUp className="inline h-4 w-4 ml-1" />}
+                  {sortOption === "columnA-desc" && <ChevronDown className="inline h-4 w-4 ml-1" />}
+                  {sortOption !== "columnA-asc" && sortOption !== "columnA-desc" && <ArrowDownUp className="inline h-4 w-4 ml-1 opacity-30" />}
+                  <br/><span className="font-normal normal-case">OpenRouter Price</span>
+                </th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Column B<br/><span className="font-normal normal-case">Suggested Price</span></th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Column C<br/><span className="font-normal normal-case">Actual Price</span></th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider cursor-pointer" onClick={() => setSortOption(sortOption === "columnC-asc" ? "columnC-desc" : "columnC-asc")}>
+                  Column C
+                  {sortOption === "columnC-asc" && <ChevronUp className="inline h-4 w-4 ml-1" />}
+                  {sortOption === "columnC-desc" && <ChevronDown className="inline h-4 w-4 ml-1" />}
+                  {sortOption !== "columnC-asc" && sortOption !== "columnC-desc" && <ArrowDownUp className="inline h-4 w-4 ml-1 opacity-30" />}
+                  <br/><span className="font-normal normal-case">Actual Price</span>
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-neutral-200">
-              {models?.map((model) => (
+              {sortedModels.map((model) => (
                 <tr key={model.id}>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
