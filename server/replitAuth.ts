@@ -4,9 +4,6 @@ import passport from "passport";
 import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import { storage } from "./storage";
-import createMemoryStore from "memorystore";
-
-const MemoryStore = createMemoryStore(session);
 
 if (!process.env.REPLIT_DOMAINS) {
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
@@ -17,9 +14,7 @@ export async function setupAuth(app: Express) {
     secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
-    store: new MemoryStore({
-      checkPeriod: 86400000, // prune expired entries every 24h
-    }),
+    store: storage.sessionStore,
   };
   app.set("trust proxy", 1);
   app.use(session(sessionSettings));

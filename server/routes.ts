@@ -42,12 +42,27 @@ const fetchOpenRouterPrices = async () => {
     });
     
     const models = response.data.data;
-    console.log('OpenRouter response:', JSON.stringify(models[0], null, 2));
+    
+    // Log full response for debugging
+    console.log('OpenRouter full response:', JSON.stringify(response.data, null, 2));
     
     // Process and transform the data
     return models.map((model: any) => {
-      // Convert price from per-token to per-million tokens
-      const openRouterPrice = (model.pricing?.input || 0) * 1000000;
+      // Get input and completion pricing (using string values that might need conversion)
+      const inputPrice = parseFloat(model.pricing?.input || "0");
+      const completionPrice = parseFloat(model.pricing?.completion || "0");
+      
+      // Use the max of input and completion prices and convert to per-million tokens
+      // Many models use the same price for both, but some charge differently
+      const openRouterPrice = Math.max(inputPrice, completionPrice) * 1000000;
+      
+      console.log(`Model ${model.id} pricing:`, { 
+        input: model.pricing?.input,
+        completion: model.pricing?.completion,
+        parsed: { inputPrice, completionPrice },
+        converted: openRouterPrice
+      });
+      
       return {
         id: model.id,
         name: model.name,

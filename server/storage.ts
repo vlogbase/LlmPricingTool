@@ -4,7 +4,15 @@ import {
   ModelPrice,
   InsertApiKey,
   ApiKey,
+  users,
+  models,
+  apiKeys
 } from "@shared/schema";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { eq } from "drizzle-orm";
+import postgres from "postgres";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 
 export interface IStorage {
   // User operations
@@ -21,14 +29,19 @@ export interface IStorage {
   // API key operations
   createApiKey(apiKey: InsertApiKey): Promise<ApiKey>;
   getApiKeyByKey(key: string): Promise<ApiKey | undefined>;
+  
+  // For session storage
+  sessionStore: session.Store;
 }
 
+// In-memory storage implementation
 export class MemStorage implements IStorage {
   private users: Map<string, User>;
   private models: Map<string, ModelPrice>;
   private apiKeys: Map<string, ApiKey>;
   private userId: number;
   private apiKeyId: number;
+  public sessionStore: session.Store;
 
   constructor() {
     this.users = new Map();
@@ -36,6 +49,12 @@ export class MemStorage implements IStorage {
     this.apiKeys = new Map();
     this.userId = 1;
     this.apiKeyId = 1;
+    
+    // Create memory session store
+    const MemoryStore = require('memorystore')(session);
+    this.sessionStore = new MemoryStore({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    });
   }
 
   // User operations
@@ -50,7 +69,12 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.userId++;
-    const user: User = { ...insertUser, id };
+    const user: User = { 
+      ...insertUser, 
+      id,
+      displayName: insertUser.displayName || null,
+      photoURL: insertUser.photoURL || null 
+    };
     this.users.set(user.email, user);
     return user;
   }
@@ -113,6 +137,7 @@ export class MemStorage implements IStorage {
     const newApiKey: ApiKey = {
       ...apiKey,
       id,
+      description: apiKey.description || null,
       createdAt: new Date()
     };
     
@@ -125,4 +150,171 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// PostgreSQL storage implementation
+export class PostgresStorage implements IStorage {
+  private db: ReturnType<typeof drizzle>;
+  private queryClient: postgres.Sql;
+  public sessionStore: session.Store;
+  
+  constructor() {
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL environment variable is required");
+    }
+    
+    // Create postgres client
+    this.queryClient = postgres(process.env.DATABASE_URL);
+    this.db = drizzle(this.queryClient);
+    
+    // Create session store
+    const PostgresSessionStore = connectPgSimple(session);
+    this.sessionStore = new PostgresSessionStore({
+      conObject: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: false
+      },
+      createTableIfMissing: true
+    });
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const results = await this.db.select().from(users).where(eq(users.email, email));
+    return results[0];
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const results = await this.db.insert(users).values({
+      ...insertUser,
+      displayName: insertUser.displayName || null,
+      photoURL: insertUser.photoURL || null
+    }).returning();
+    return results[0];
+  }
+
+  async getAllModels(): Promise<ModelPrice[]> {
+    const results = await this.db.select().from(models);
+    return results.map(model => ({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      openRouterPrice: Number(model.openRouterPrice),
+      suggestedPrice: Number(model.suggestedPrice),
+      actualPrice: Number(model.actualPrice),
+      lastUpdated: model.lastUpdated.toISOString()
+    }));
+  }
+
+  async getModelById(id: string): Promise<ModelPrice | undefined> {
+    const results = await this.db.select().from(models).where(eq(models.id, id));
+    if (results.length === 0) return undefined;
+    
+    const model = results[0];
+    return {
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      openRouterPrice: Number(model.openRouterPrice),
+      suggestedPrice: Number(model.suggestedPrice),
+      actualPrice: Number(model.actualPrice),
+      lastUpdated: model.lastUpdated.toISOString()
+    };
+  }
+
+  async createModel(model: Omit<ModelPrice, 'lastUpdated'> & { lastUpdated?: string }): Promise<ModelPrice> {
+    const lastUpdated = model.lastUpdated ? new Date(model.lastUpdated) : new Date();
+    
+    const results = await this.db.insert(models).values({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      openRouterPrice: model.openRouterPrice,
+      suggestedPrice: model.suggestedPrice,
+      actualPrice: model.actualPrice,
+      lastUpdated
+    }).returning();
+    
+    const createdModel = results[0];
+    return {
+      id: createdModel.id,
+      name: createdModel.name,
+      provider: createdModel.provider,
+      openRouterPrice: Number(createdModel.openRouterPrice),
+      suggestedPrice: Number(createdModel.suggestedPrice),
+      actualPrice: Number(createdModel.actualPrice),
+      lastUpdated: createdModel.lastUpdated.toISOString()
+    };
+  }
+
+  async updateModel(id: string, model: Partial<ModelPrice>): Promise<ModelPrice> {
+    // Remove lastUpdated from the model if it's a string
+    const { lastUpdated, ...restModel } = model;
+    
+    // Update values
+    const updateValues: any = { ...restModel };
+    if (lastUpdated) {
+      updateValues.lastUpdated = new Date(lastUpdated);
+    }
+    
+    const results = await this.db.update(models)
+      .set(updateValues)
+      .where(eq(models.id, id))
+      .returning();
+    
+    if (results.length === 0) {
+      throw new Error(`Model with ID ${id} not found`);
+    }
+    
+    const updatedModel = results[0];
+    return {
+      id: updatedModel.id,
+      name: updatedModel.name,
+      provider: updatedModel.provider,
+      openRouterPrice: Number(updatedModel.openRouterPrice),
+      suggestedPrice: Number(updatedModel.suggestedPrice),
+      actualPrice: Number(updatedModel.actualPrice),
+      lastUpdated: updatedModel.lastUpdated.toISOString()
+    };
+  }
+
+  async updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice> {
+    const results = await this.db.update(models)
+      .set({
+        actualPrice,
+        lastUpdated: new Date()
+      })
+      .where(eq(models.id, id))
+      .returning();
+    
+    if (results.length === 0) {
+      throw new Error(`Model with ID ${id} not found`);
+    }
+    
+    const updatedModel = results[0];
+    return {
+      id: updatedModel.id,
+      name: updatedModel.name,
+      provider: updatedModel.provider,
+      openRouterPrice: Number(updatedModel.openRouterPrice),
+      suggestedPrice: Number(updatedModel.suggestedPrice),
+      actualPrice: Number(updatedModel.actualPrice),
+      lastUpdated: updatedModel.lastUpdated.toISOString()
+    };
+  }
+
+  async createApiKey(apiKey: InsertApiKey): Promise<ApiKey> {
+    const results = await this.db.insert(apiKeys).values({
+      ...apiKey,
+      description: apiKey.description || null
+    }).returning();
+    return results[0];
+  }
+
+  async getApiKeyByKey(key: string): Promise<ApiKey | undefined> {
+    const results = await this.db.select().from(apiKeys).where(eq(apiKeys.key, key));
+    return results[0];
+  }
+}
+
+// Choose which storage implementation to use
+// Comment out the implementation you don't want to use
+// export const storage = new MemStorage();
+export const storage = new PostgresStorage();
