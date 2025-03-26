@@ -7,15 +7,30 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/formatter";
 import { useToast } from "@/hooks/use-toast";
 import { ModelPrice } from "@shared/schema";
-import { RefreshCw, CheckCircle, Brain } from "lucide-react";
+import { RefreshCw, ChevronDown, ChevronUp, Brain, ArrowDownUp } from "lucide-react";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 
 interface PricingTableProps {
   canEdit: boolean;
 }
 
+type SortOption = 
+  | "default" 
+  | "columnA-asc" 
+  | "columnA-desc" 
+  | "columnC-asc" 
+  | "columnC-desc";
+
 export function PricingTable({ canEdit }: PricingTableProps) {
   const { toast } = useToast();
   const [editedPrices, setEditedPrices] = useState<Record<string, number>>({});
+  const [sortOption, setSortOption] = useState<SortOption>("default");
   
   const { data: models, isLoading, isError, error } = useQuery<ModelPrice[]>({
     queryKey: ['/api/model-prices'],

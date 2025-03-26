@@ -42,10 +42,12 @@ const fetchOpenRouterPrices = async () => {
     });
     
     const models = response.data.data;
+    console.log('OpenRouter response:', JSON.stringify(models[0], null, 2));
     
     // Process and transform the data
     return models.map((model: any) => {
-      const openRouterPrice = model.pricing?.input || 0;
+      // Convert price from per-token to per-million tokens
+      const openRouterPrice = (model.pricing?.input || 0) * 1000000;
       return {
         id: model.id,
         name: model.name,
@@ -95,7 +97,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Refresh prices from OpenRouter
-  app.post('/api/refresh-prices', isAuthenticated, async (req, res) => {
+  app.post('/api/refresh-prices', async (req, res) => {
     try {
       const openRouterModels = await fetchOpenRouterPrices();
       
