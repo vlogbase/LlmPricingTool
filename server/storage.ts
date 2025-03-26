@@ -319,7 +319,24 @@ export class PostgresStorage implements IStorage {
   }
 }
 
-// Choose which storage implementation to use
-// Comment out the implementation you don't want to use
-// export const storage = new MemStorage();
-export const storage = new PostgresStorage();
+// Choose which storage implementation to use based on environment
+let storage: IStorage;
+
+try {
+  // If DATABASE_URL is available, use PostgreSQL storage
+  if (process.env.DATABASE_URL) {
+    storage = new PostgresStorage();
+    console.log('Using PostgreSQL storage');
+  } else {
+    // Otherwise, fallback to in-memory storage
+    storage = new MemStorage();
+    console.log('DATABASE_URL not found, using in-memory storage');
+  }
+} catch (error) {
+  console.error('Error initializing database storage:', error);
+  // Fallback to in-memory storage in case of errors
+  storage = new MemStorage();
+  console.log('Fallback to in-memory storage due to database error');
+}
+
+export { storage };

@@ -199,15 +199,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const modelPrices = await storage.getAllModels();
       
-      // Transform data to public API format
+      // Transform data to match OpenRouter format
+      // OpenRouter provides prices per token (not per million tokens), so convert back
       const formattedData = {
-        models: modelPrices.map(model => ({
+        data: modelPrices.map(model => ({
           id: model.id,
           name: model.name,
-          provider: model.provider,
-          price_per_million_tokens: model.actualPrice
-        })),
-        last_updated: new Date().toISOString()
+          pricing: {
+            // Note: OpenRouter uses per-token pricing (not per million tokens)
+            // So divide our stored price (per million) by 1,000,000
+            input: (model.actualPrice / 1000000).toFixed(9),
+            completion: (model.actualPrice / 1000000).toFixed(9)
+          },
+          context_length: 8192, // Default context length
+          creator: model.provider
+        }))
       };
       
       res.json(formattedData);

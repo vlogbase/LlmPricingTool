@@ -31,6 +31,7 @@ export default function Home() {
         <APIInformation 
           apiEndpoint={apiEndpoint?.endpoint || "https://example.com/api/llm-pricing"} 
           isLoading={endpointLoading}
+          isAuthorized={isAuthorized}
         />
       </main>
 
