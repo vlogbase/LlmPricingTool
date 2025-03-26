@@ -59,12 +59,9 @@ export class MemStorage implements IStorage {
 
   // User operations
   async getUserByEmail(email: string): Promise<User | undefined> {
-    for (const user of this.users.values()) {
-      if (user.email === email) {
-        return user;
-      }
-    }
-    return undefined;
+    // Use Array.from to avoid iterator issues
+    const userArray = Array.from(this.users.values());
+    return userArray.find(user => user.email === email);
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -222,13 +219,14 @@ export class PostgresStorage implements IStorage {
   async createModel(model: Omit<ModelPrice, 'lastUpdated'> & { lastUpdated?: string }): Promise<ModelPrice> {
     const lastUpdated = model.lastUpdated ? new Date(model.lastUpdated) : new Date();
     
+    // Convert numeric values to strings for drizzle
     const results = await this.db.insert(models).values({
       id: model.id,
       name: model.name,
       provider: model.provider,
-      openRouterPrice: model.openRouterPrice,
-      suggestedPrice: model.suggestedPrice,
-      actualPrice: model.actualPrice,
+      openRouterPrice: String(model.openRouterPrice),
+      suggestedPrice: String(model.suggestedPrice),
+      actualPrice: String(model.actualPrice),
       lastUpdated
     }).returning();
     
@@ -246,10 +244,17 @@ export class PostgresStorage implements IStorage {
 
   async updateModel(id: string, model: Partial<ModelPrice>): Promise<ModelPrice> {
     // Remove lastUpdated from the model if it's a string
-    const { lastUpdated, ...restModel } = model;
+    const { lastUpdated, openRouterPrice, suggestedPrice, actualPrice, ...otherFields } = model;
     
-    // Update values
-    const updateValues: any = { ...restModel };
+    // Update values with proper type conversions
+    const updateValues: Record<string, any> = { ...otherFields };
+    
+    // Convert numeric values to strings
+    if (openRouterPrice !== undefined) updateValues.openRouterPrice = String(openRouterPrice);
+    if (suggestedPrice !== undefined) updateValues.suggestedPrice = String(suggestedPrice);
+    if (actualPrice !== undefined) updateValues.actualPrice = String(actualPrice);
+    
+    // Handle lastUpdated
     if (lastUpdated) {
       updateValues.lastUpdated = new Date(lastUpdated);
     }
@@ -278,7 +283,7 @@ export class PostgresStorage implements IStorage {
   async updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice> {
     const results = await this.db.update(models)
       .set({
-        actualPrice,
+        actualPrice: String(actualPrice),
         lastUpdated: new Date()
       })
       .where(eq(models.id, id))
