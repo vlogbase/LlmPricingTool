@@ -83,7 +83,10 @@ export function PricingTable({ canEdit }: PricingTableProps) {
   const refreshMutation = useMutation({
     mutationFn: async () => {
       return apiRequest('/api/refresh-prices', {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
       });
     },
     onSuccess: () => {
@@ -107,6 +110,9 @@ export function PricingTable({ canEdit }: PricingTableProps) {
     mutationFn: async (data: Record<string, number>) => {
       return apiRequest('/api/update-prices', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ actualPrices: data })
       });
     },
@@ -133,6 +139,9 @@ export function PricingTable({ canEdit }: PricingTableProps) {
     mutationFn: async (data: { percentageMarkup?: number, flatFeeMarkup?: number }) => {
       return apiRequest('/api/price-settings', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify(data)
       });
     },
@@ -176,6 +185,9 @@ export function PricingTable({ canEdit }: PricingTableProps) {
     mutationFn: async () => {
       return apiRequest('/api/update-prices', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ actualPrices: newPrices })
       });
     },

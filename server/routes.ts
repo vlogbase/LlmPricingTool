@@ -155,7 +155,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Update actual prices
   app.post('/api/update-prices', isAuthenticated, isAuthorized, async (req, res) => {
-    const { actualPrices } = req.body;
+    console.log('Received update prices request:', req.body);
+    
+    // Parse the request body if it's a string
+    let parsedBody = req.body;
+    if (typeof req.body === 'string') {
+      try {
+        parsedBody = JSON.parse(req.body);
+      } catch (e) {
+        console.error('Error parsing request body:', e);
+        return res.status(400).json({ message: "Bad request: Invalid JSON" });
+      }
+    }
+    
+    const { actualPrices } = parsedBody;
+    console.log('Extracted actualPrices:', actualPrices);
     
     if (!actualPrices || typeof actualPrices !== 'object') {
       return res.status(400).json({ message: "Bad request: No actual prices provided" });
@@ -217,7 +231,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Update price settings
   app.post('/api/price-settings', isAuthenticated, isAuthorized, async (req, res) => {
-    const { percentageMarkup, flatFeeMarkup } = req.body;
+    console.log('Received price settings update request:', req.body);
+    
+    // Parse the request body if it's a string
+    let parsedBody = req.body;
+    if (typeof req.body === 'string') {
+      try {
+        parsedBody = JSON.parse(req.body);
+      } catch (e) {
+        console.error('Error parsing request body:', e);
+        return res.status(400).json({ message: "Bad request: Invalid JSON" });
+      }
+    }
+    
+    const { percentageMarkup, flatFeeMarkup } = parsedBody;
+    console.log('Extracted values:', { percentageMarkup, flatFeeMarkup });
     
     // Validate inputs
     if (percentageMarkup === undefined && flatFeeMarkup === undefined) {
