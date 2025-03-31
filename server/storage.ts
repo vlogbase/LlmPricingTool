@@ -4,9 +4,13 @@ import {
   ModelPrice,
   InsertApiKey,
   ApiKey,
+  PriceSettingsDTO,
+  InsertPriceSettings,
+  PriceSettings,
   users,
   models,
-  apiKeys
+  apiKeys,
+  priceSettings
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
@@ -26,6 +30,10 @@ export interface IStorage {
   updateModel(id: string, model: Partial<ModelPrice>): Promise<ModelPrice>;
   updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice>;
   
+  // Price settings operations
+  getPriceSettings(): Promise<PriceSettingsDTO>;
+  updatePriceSettings(settings: Partial<PriceSettingsDTO>): Promise<PriceSettingsDTO>;
+  
   // API key operations
   createApiKey(apiKey: InsertApiKey): Promise<ApiKey>;
   getApiKeyByKey(key: string): Promise<ApiKey | undefined>;
@@ -39,6 +47,7 @@ export class MemStorage implements IStorage {
   private users: Map<string, User>;
   private models: Map<string, ModelPrice>;
   private apiKeys: Map<string, ApiKey>;
+  private settings: PriceSettingsDTO;
   private userId: number;
   private apiKeyId: number;
   public sessionStore: session.Store;
@@ -49,6 +58,14 @@ export class MemStorage implements IStorage {
     this.apiKeys = new Map();
     this.userId = 1;
     this.apiKeyId = 1;
+    
+    // Default price settings
+    this.settings = {
+      id: 1,
+      percentageMarkup: 25,
+      flatFeeMarkup: 0.2,
+      lastUpdated: new Date().toISOString()
+    };
     
     // Create memory session store
     const MemoryStore = require('memorystore')(session);
@@ -144,6 +161,20 @@ export class MemStorage implements IStorage {
 
   async getApiKeyByKey(key: string): Promise<ApiKey | undefined> {
     return this.apiKeys.get(key);
+  }
+  
+  // Price settings operations
+  async getPriceSettings(): Promise<PriceSettingsDTO> {
+    return this.settings;
+  }
+  
+  async updatePriceSettings(settings: Partial<PriceSettingsDTO>): Promise<PriceSettingsDTO> {
+    this.settings = {
+      ...this.settings,
+      ...settings,
+      lastUpdated: new Date().toISOString()
+    };
+    return this.settings;
   }
 }
 
@@ -316,6 +347,63 @@ export class PostgresStorage implements IStorage {
   async getApiKeyByKey(key: string): Promise<ApiKey | undefined> {
     const results = await this.db.select().from(apiKeys).where(eq(apiKeys.key, key));
     return results[0];
+  }
+  
+  // Price settings operations
+  async getPriceSettings(): Promise<PriceSettingsDTO> {
+    const results = await this.db.select().from(priceSettings);
+    
+    if (results.length === 0) {
+      // Create default settings if none exist
+      // Convert numbers to strings for PostgreSQL
+      const defaultSettings = {
+        percentageMarkup: '25',
+        flatFeeMarkup: '0.2'
+      };
+      
+      const created = await this.db.insert(priceSettings)
+        .values([defaultSettings])
+        .returning();
+        
+      return {
+        id: created[0].id,
+        percentageMarkup: Number(created[0].percentageMarkup),
+        flatFeeMarkup: Number(created[0].flatFeeMarkup),
+        lastUpdated: created[0].lastUpdated.toISOString()
+      };
+    }
+    
+    const settings = results[0];
+    return {
+      id: settings.id,
+      percentageMarkup: Number(settings.percentageMarkup),
+      flatFeeMarkup: Number(settings.flatFeeMarkup),
+      lastUpdated: settings.lastUpdated.toISOString()
+    };
+  }
+  
+  async updatePriceSettings(settings: Partial<PriceSettingsDTO>): Promise<PriceSettingsDTO> {
+    // Get existing settings to ensure we're updating an existing record
+    const existingSettings = await this.getPriceSettings();
+    
+    // Update values with proper type conversion
+    const updateValues: Record<string, any> = {};
+    if (settings.percentageMarkup !== undefined) updateValues.percentageMarkup = String(settings.percentageMarkup);
+    if (settings.flatFeeMarkup !== undefined) updateValues.flatFeeMarkup = String(settings.flatFeeMarkup);
+    updateValues.lastUpdated = new Date();
+    
+    const results = await this.db.update(priceSettings)
+      .set(updateValues)
+      .where(eq(priceSettings.id, existingSettings.id))
+      .returning();
+    
+    const updated = results[0];
+    return {
+      id: updated.id,
+      percentageMarkup: Number(updated.percentageMarkup),
+      flatFeeMarkup: Number(updated.flatFeeMarkup),
+      lastUpdated: updated.lastUpdated.toISOString()
+    };
   }
 }
 

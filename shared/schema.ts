@@ -2,6 +2,26 @@ import { pgTable, text, serial, numeric, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Price Settings Table
+export const priceSettings = pgTable("price_settings", {
+  id: serial("id").primaryKey(),
+  percentageMarkup: numeric("percentage_markup", { precision: 5, scale: 2 }).notNull().default("25"),
+  flatFeeMarkup: numeric("flat_fee_markup", { precision: 5, scale: 2 }).notNull().default("0.2"),
+  lastUpdated: timestamp("last_updated").notNull().defaultNow(),
+});
+
+export const insertPriceSettingsSchema = createInsertSchema(priceSettings);
+export type InsertPriceSettings = z.infer<typeof insertPriceSettingsSchema>;
+export type PriceSettings = typeof priceSettings.$inferSelect;
+
+// For frontend type safety
+export interface PriceSettingsDTO {
+  id: number;
+  percentageMarkup: number;
+  flatFeeMarkup: number;
+  lastUpdated: string;
+}
+
 // Users Table
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),

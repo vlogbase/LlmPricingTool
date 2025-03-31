@@ -6,8 +6,13 @@ import { nanoid } from "nanoid";
 import { setupAuth, isAuthenticated, isAuthorized } from "./replitAuth";
 
 // Function to calculate suggested price from OpenRouter price
-const calculateSuggestedPrice = (openRouterPrice: number): number => {
-  return openRouterPrice * 1.25 + 0.2;
+const calculateSuggestedPrice = async (openRouterPrice: number): Promise<number> => {
+  // Get the markup values from settings
+  const settings = await storage.getPriceSettings();
+  const percentageMarkup = settings.percentageMarkup / 100; // Convert percentage to decimal
+  const flatFeeMarkup = settings.flatFeeMarkup;
+  
+  return openRouterPrice * (1 + percentageMarkup) + flatFeeMarkup;
 };
 
 // Middleware to verify API key
@@ -47,7 +52,8 @@ const fetchOpenRouterPrices = async () => {
     console.log('OpenRouter full response:', JSON.stringify(response.data, null, 2));
     
     // Process and transform the data
-    return models.map((model: any) => {
+    const processedModels = [];
+    for (const model of models) {
       // Get input and completion pricing (using string values that might need conversion)
       const inputPrice = parseFloat(model.pricing?.input || "0");
       const completionPrice = parseFloat(model.pricing?.completion || "0");
@@ -63,16 +69,20 @@ const fetchOpenRouterPrices = async () => {
         converted: openRouterPrice
       });
       
-      return {
+      const suggestedPrice = await calculateSuggestedPrice(openRouterPrice);
+      
+      processedModels.push({
         id: model.id,
         name: model.name,
         provider: model.creator || 'Unknown',
         openRouterPrice,
-        suggestedPrice: calculateSuggestedPrice(openRouterPrice),
+        suggestedPrice,
         // Default actual price to suggested price initially
-        actualPrice: calculateSuggestedPrice(openRouterPrice)
-      };
-    });
+        actualPrice: suggestedPrice
+      });
+    }
+    
+    return processedModels;
   } catch (error) {
     console.error('Error fetching from OpenRouter:', error);
     throw new Error('Failed to fetch prices from OpenRouter');
@@ -191,6 +201,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error generating API key:", error);
       res.status(500).json({ message: "Failed to generate API key" });
+    }
+  });
+  
+  // Get price settings
+  app.get('/api/price-settings', isAuthenticated, isAuthorized, async (req, res) => {
+    try {
+      const settings = await storage.getPriceSettings();
+      res.json(settings);
+    } catch (error) {
+      console.error("Error getting price settings:", error);
+      res.status(500).json({ message: "Failed to get price settings" });
+    }
+  });
+  
+  // Update price settings
+  app.post('/api/price-settings', isAuthenticated, isAuthorized, async (req, res) => {
+    const { percentageMarkup, flatFeeMarkup } = req.body;
+    
+    // Validate inputs
+    if (percentageMarkup === undefined && flatFeeMarkup === undefined) {
+      return res.status(400).json({ message: "Bad request: No settings provided" });
+    }
+    
+    const updates: Partial<{ percentageMarkup: number, flatFeeMarkup: number }> = {};
+    
+    if (percentageMarkup !== undefined) {
+      const percentValue = parseFloat(percentageMarkup);
+      if (isNaN(percentValue) || percentValue < 0) {
+        return res.status(400).json({ message: "Bad request: Invalid percentage markup" });
+      }
+      updates.percentageMarkup = percentValue;
+    }
+    
+    if (flatFeeMarkup !== undefined) {
+      const feeValue = parseFloat(flatFeeMarkup);
+      if (isNaN(feeValue) || feeValue < 0) {
+        return res.status(400).json({ message: "Bad request: Invalid flat fee markup" });
+      }
+      updates.flatFeeMarkup = feeValue;
+    }
+    
+    try {
+      const updatedSettings = await storage.updatePriceSettings(updates);
+      
+      // After updating the markup values, we need to recalculate the suggested prices
+      // for all models and update them in the database
+      const models = await storage.getAllModels();
+      
+      for (const model of models) {
+        const suggestedPrice = await calculateSuggestedPrice(model.openRouterPrice);
+        await storage.updateModel(model.id, { suggestedPrice });
+      }
+      
+      res.json({
+        settings: updatedSettings,
+        message: "Price settings updated successfully"
+      });
+    } catch (error) {
+      console.error("Error updating price settings:", error);
+      res.status(500).json({ message: "Failed to update price settings" });
     }
   });
   
