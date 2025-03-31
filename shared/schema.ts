@@ -1,4 +1,4 @@
-import { pgTable, text, serial, numeric, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, numeric, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -80,3 +80,41 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).pick({
 
 export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type ApiKey = typeof apiKeys.$inferSelect;
+
+// Scheduled Price Changes Table
+export const scheduledPrices = pgTable("scheduled_prices", {
+  id: serial("id").primaryKey(),
+  modelId: text("model_id").notNull().references(() => models.id, { onDelete: 'cascade' }),
+  scheduledPrice: numeric("scheduled_price", { precision: 10, scale: 4 }).notNull(),
+  effectiveDate: timestamp("effective_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  applied: boolean("applied").notNull().default(false),
+});
+
+// Create schema with validation that converts numeric types appropriately
+export const insertScheduledPriceSchema = createInsertSchema(scheduledPrices).pick({
+  modelId: true,
+  scheduledPrice: true,
+  effectiveDate: true,
+});
+
+// Define a custom type that accepts either string or number for scheduledPrice
+// but stores as string internally to match PostgreSQL
+export type InsertScheduledPrice = {
+  modelId: string;
+  scheduledPrice: string | number;
+  effectiveDate: string | Date;
+};
+export type ScheduledPrice = typeof scheduledPrices.$inferSelect;
+
+// For frontend type safety
+export interface ScheduledPriceDTO {
+  id: number;
+  modelId: string;
+  modelName: string;
+  provider: string;
+  currentPrice: number;
+  scheduledPrice: number;
+  effectiveDate: string;
+  applied: boolean;
+}

@@ -7,13 +7,17 @@ import {
   PriceSettingsDTO,
   InsertPriceSettings,
   PriceSettings,
+  InsertScheduledPrice,
+  ScheduledPrice,
+  ScheduledPriceDTO,
   users,
   models,
   apiKeys,
-  priceSettings
+  priceSettings,
+  scheduledPrices
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq } from "drizzle-orm";
+import { eq, and, lte, gt } from "drizzle-orm";
 import postgres from "postgres";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
@@ -38,6 +42,14 @@ export interface IStorage {
   createApiKey(apiKey: InsertApiKey): Promise<ApiKey>;
   getApiKeyByKey(key: string): Promise<ApiKey | undefined>;
   
+  // Scheduled price operations
+  createScheduledPrice(scheduledPrice: InsertScheduledPrice): Promise<ScheduledPrice>;
+  getScheduledPricesByModel(modelId: string): Promise<ScheduledPrice[]>;
+  getAllScheduledPrices(): Promise<ScheduledPriceDTO[]>;
+  getScheduledPriceById(id: number): Promise<ScheduledPrice | undefined>;
+  applyScheduledPrice(id: number): Promise<ModelPrice>;
+  applyDueScheduledPrices(): Promise<number>; // Returns count of applied changes
+  
   // For session storage
   sessionStore: session.Store;
 }
@@ -47,17 +59,21 @@ export class MemStorage implements IStorage {
   private users: Map<string, User>;
   private models: Map<string, ModelPrice>;
   private apiKeys: Map<string, ApiKey>;
+  private scheduledPrices: Map<number, ScheduledPrice>;
   private settings: PriceSettingsDTO;
   private userId: number;
   private apiKeyId: number;
+  private scheduledPriceId: number;
   public sessionStore: session.Store;
 
   constructor() {
     this.users = new Map();
     this.models = new Map();
     this.apiKeys = new Map();
+    this.scheduledPrices = new Map();
     this.userId = 1;
     this.apiKeyId = 1;
+    this.scheduledPriceId = 1;
     
     // Default price settings
     this.settings = {
@@ -175,6 +191,104 @@ export class MemStorage implements IStorage {
       lastUpdated: new Date().toISOString()
     };
     return this.settings;
+  }
+
+  // Scheduled price operations
+  async createScheduledPrice(scheduledPrice: InsertScheduledPrice): Promise<ScheduledPrice> {
+    const id = this.scheduledPriceId++;
+    const newScheduledPrice: ScheduledPrice = {
+      id,
+      modelId: scheduledPrice.modelId,
+      scheduledPrice: String(scheduledPrice.scheduledPrice), // Convert to string to match interface
+      effectiveDate: new Date(scheduledPrice.effectiveDate),
+      createdAt: new Date(),
+      applied: false
+    };
+    
+    this.scheduledPrices.set(id, newScheduledPrice);
+    return newScheduledPrice;
+  }
+  
+  async getScheduledPricesByModel(modelId: string): Promise<ScheduledPrice[]> {
+    return Array.from(this.scheduledPrices.values()).filter(
+      sp => sp.modelId === modelId && !sp.applied
+    );
+  }
+  
+  async getAllScheduledPrices(): Promise<ScheduledPriceDTO[]> {
+    // Get all scheduled prices that haven't been applied yet
+    const scheduledPrices = Array.from(this.scheduledPrices.values()).filter(
+      sp => !sp.applied
+    );
+    
+    // Map to DTO by adding model information
+    const result: ScheduledPriceDTO[] = [];
+    
+    for (const sp of scheduledPrices) {
+      const model = this.models.get(sp.modelId);
+      if (model) {
+        result.push({
+          id: sp.id,
+          modelId: sp.modelId,
+          modelName: model.name,
+          provider: model.provider,
+          currentPrice: model.actualPrice,
+          scheduledPrice: Number(sp.scheduledPrice), // Convert to number for DTO
+          effectiveDate: sp.effectiveDate.toISOString(),
+          applied: sp.applied
+        });
+      }
+    }
+    
+    return result;
+  }
+  
+  async getScheduledPriceById(id: number): Promise<ScheduledPrice | undefined> {
+    return this.scheduledPrices.get(id);
+  }
+  
+  async applyScheduledPrice(id: number): Promise<ModelPrice> {
+    const scheduledPrice = this.scheduledPrices.get(id);
+    
+    if (!scheduledPrice) {
+      throw new Error(`Scheduled price with ID ${id} not found`);
+    }
+    
+    // Update the actual price for the model
+    // Convert the string price to a number
+    const actualPrice = Number(scheduledPrice.scheduledPrice);
+    const updatedModel = await this.updateModelActualPrice(
+      scheduledPrice.modelId, 
+      actualPrice
+    );
+    
+    // Mark the scheduled price as applied
+    scheduledPrice.applied = true;
+    this.scheduledPrices.set(id, scheduledPrice);
+    
+    return updatedModel;
+  }
+  
+  async applyDueScheduledPrices(): Promise<number> {
+    const now = new Date();
+    let appliedCount = 0;
+    
+    // Get all scheduled prices that are due but not yet applied
+    const duePrices = Array.from(this.scheduledPrices.values()).filter(
+      sp => !sp.applied && sp.effectiveDate <= now
+    );
+    
+    // Apply each scheduled price
+    for (const sp of duePrices) {
+      try {
+        await this.applyScheduledPrice(sp.id);
+        appliedCount++;
+      } catch (error) {
+        console.error(`Error applying scheduled price ${sp.id}:`, error);
+      }
+    }
+    
+    return appliedCount;
   }
 }
 
@@ -404,6 +518,122 @@ export class PostgresStorage implements IStorage {
       flatFeeMarkup: Number(updated.flatFeeMarkup),
       lastUpdated: updated.lastUpdated.toISOString()
     };
+  }
+
+  // Scheduled price operations
+  async createScheduledPrice(scheduledPrice: InsertScheduledPrice): Promise<ScheduledPrice> {
+    // Convert to appropriate types for PostgreSQL
+    const values = {
+      modelId: scheduledPrice.modelId,
+      scheduledPrice: String(scheduledPrice.scheduledPrice),
+      effectiveDate: new Date(scheduledPrice.effectiveDate),
+      applied: false
+    };
+    
+    const results = await this.db.insert(scheduledPrices)
+      .values(values)
+      .returning();
+      
+    const createdPrice = results[0];
+    return createdPrice;
+  }
+  
+  async getScheduledPricesByModel(modelId: string): Promise<ScheduledPrice[]> {
+    const results = await this.db.select()
+      .from(scheduledPrices)
+      .where(and(
+        eq(scheduledPrices.modelId, modelId),
+        eq(scheduledPrices.applied, false)
+      ));
+      
+    return results;
+  }
+  
+  async getAllScheduledPrices(): Promise<ScheduledPriceDTO[]> {
+    // Get all scheduled prices that haven't been applied yet
+    const results = await this.db.select()
+      .from(scheduledPrices)
+      .where(eq(scheduledPrices.applied, false));
+      
+    // Map to DTOs with model information
+    const dtos: ScheduledPriceDTO[] = [];
+    
+    for (const sp of results) {
+      const model = await this.getModelById(sp.modelId);
+      if (model) {
+        dtos.push({
+          id: sp.id,
+          modelId: sp.modelId,
+          modelName: model.name,
+          provider: model.provider,
+          currentPrice: model.actualPrice,
+          scheduledPrice: Number(sp.scheduledPrice),
+          effectiveDate: sp.effectiveDate.toISOString(),
+          applied: sp.applied
+        });
+      }
+    }
+    
+    return dtos;
+  }
+  
+  async getScheduledPriceById(id: number): Promise<ScheduledPrice | undefined> {
+    const results = await this.db.select()
+      .from(scheduledPrices)
+      .where(eq(scheduledPrices.id, id));
+      
+    if (results.length === 0) return undefined;
+    
+    return results[0];
+  }
+  
+  async applyScheduledPrice(id: number): Promise<ModelPrice> {
+    // Get the scheduled price
+    const scheduledPrice = await this.getScheduledPriceById(id);
+    
+    if (!scheduledPrice) {
+      throw new Error(`Scheduled price with ID ${id} not found`);
+    }
+    
+    // Update the model's actual price
+    // Convert string price to number for the update
+    const actualPrice = Number(scheduledPrice.scheduledPrice);
+    const updatedModel = await this.updateModelActualPrice(
+      scheduledPrice.modelId,
+      actualPrice
+    );
+    
+    // Mark the scheduled price as applied
+    await this.db.update(scheduledPrices)
+      .set({ applied: true })
+      .where(eq(scheduledPrices.id, id));
+      
+    return updatedModel;
+  }
+  
+  async applyDueScheduledPrices(): Promise<number> {
+    const now = new Date();
+    let appliedCount = 0;
+    
+    // Get all scheduled prices that are due but not yet applied
+    const duePrices = await this.db.select()
+      .from(scheduledPrices)
+      .where(and(
+        eq(scheduledPrices.applied, false),
+        lte(scheduledPrices.effectiveDate, now)
+      ));
+    
+    // Apply each scheduled price
+    for (const sp of duePrices) {
+      try {
+        await this.applyScheduledPrice(sp.id);
+        appliedCount++;
+      } catch (error) {
+        console.error(`Error applying scheduled price ${sp.id}:`, error);
+      }
+    }
+    
+    return appliedCount;
   }
 }
 

@@ -292,6 +292,144 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Create scheduled price change
+  app.post('/api/scheduled-prices', isAuthenticated, isAuthorized, async (req, res) => {
+    console.log('Received scheduled price request:', req.body);
+    
+    // Parse the request body if it's a string
+    let parsedBody = req.body;
+    if (typeof req.body === 'string') {
+      try {
+        parsedBody = JSON.parse(req.body);
+      } catch (e) {
+        console.error('Error parsing request body:', e);
+        return res.status(400).json({ message: "Bad request: Invalid JSON" });
+      }
+    }
+    
+    const { modelId, scheduledPrice, effectiveDate } = parsedBody;
+    console.log('Extracted values:', { modelId, scheduledPrice, effectiveDate });
+    
+    // Validate inputs
+    if (!modelId || scheduledPrice === undefined || !effectiveDate) {
+      return res.status(400).json({ 
+        message: "Bad request: Missing required fields",
+        details: "Required fields: modelId, scheduledPrice, effectiveDate"
+      });
+    }
+    
+    const priceValue = parseFloat(scheduledPrice);
+    if (isNaN(priceValue) || priceValue < 0) {
+      return res.status(400).json({ message: "Bad request: Invalid price value" });
+    }
+    
+    // Validate date
+    try {
+      const date = new Date(effectiveDate);
+      if (date <= new Date()) {
+        return res.status(400).json({ 
+          message: "Bad request: Effective date must be in the future"
+        });
+      }
+    } catch (e) {
+      return res.status(400).json({ 
+        message: "Bad request: Invalid date format",
+        details: "Date should be in ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)"
+      });
+    }
+    
+    try {
+      // Check if model exists
+      const model = await storage.getModelById(modelId);
+      if (!model) {
+        return res.status(404).json({ message: `Model with ID ${modelId} not found` });
+      }
+      
+      // Create the scheduled price change
+      const newScheduledPrice = await storage.createScheduledPrice({
+        modelId,
+        scheduledPrice: priceValue, // InsertScheduledPrice type accepts number now
+        effectiveDate
+      });
+      
+      res.status(201).json({
+        scheduledPrice: newScheduledPrice,
+        message: "Scheduled price change created successfully"
+      });
+    } catch (error) {
+      console.error("Error creating scheduled price:", error);
+      res.status(500).json({ message: "Failed to create scheduled price change" });
+    }
+  });
+  
+  // Get all scheduled price changes
+  app.get('/api/scheduled-prices', isAuthenticated, isAuthorized, async (req, res) => {
+    try {
+      const scheduledPrices = await storage.getAllScheduledPrices();
+      res.json(scheduledPrices);
+    } catch (error) {
+      console.error("Error getting scheduled prices:", error);
+      res.status(500).json({ message: "Failed to get scheduled prices" });
+    }
+  });
+  
+  // Get scheduled price changes for a specific model
+  app.get('/api/scheduled-prices/model/:modelId', isAuthenticated, isAuthorized, async (req, res) => {
+    const { modelId } = req.params;
+    
+    try {
+      const scheduledPrices = await storage.getScheduledPricesByModel(modelId);
+      res.json(scheduledPrices);
+    } catch (error) {
+      console.error(`Error getting scheduled prices for model ${modelId}:`, error);
+      res.status(500).json({ message: "Failed to get scheduled prices" });
+    }
+  });
+  
+  // Apply a scheduled price change (manual trigger)
+  app.post('/api/scheduled-prices/:id/apply', isAuthenticated, isAuthorized, async (req, res) => {
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Bad request: Invalid ID format" });
+    }
+    
+    try {
+      // Check if the scheduled price exists
+      const scheduledPrice = await storage.getScheduledPriceById(id);
+      if (!scheduledPrice) {
+        return res.status(404).json({ message: `Scheduled price with ID ${id} not found` });
+      }
+      
+      // Apply the scheduled price change
+      const updatedModel = await storage.applyScheduledPrice(id);
+      
+      res.json({
+        model: updatedModel,
+        message: "Scheduled price applied successfully"
+      });
+    } catch (error) {
+      console.error(`Error applying scheduled price ${id}:`, error);
+      res.status(500).json({ message: "Failed to apply scheduled price" });
+    }
+  });
+  
+  // Endpoint to check and apply due scheduled prices
+  app.post('/api/scheduled-prices/apply-due', isAuthenticated, isAuthorized, async (req, res) => {
+    try {
+      const appliedCount = await storage.applyDueScheduledPrices();
+      res.json({
+        appliedCount,
+        message: appliedCount > 0 
+          ? `Successfully applied ${appliedCount} scheduled price changes` 
+          : "No scheduled price changes were due for application"
+      });
+    } catch (error) {
+      console.error("Error applying due scheduled prices:", error);
+      res.status(500).json({ message: "Failed to apply due scheduled prices" });
+    }
+  });
+  
   // Public API endpoints (protected with API key)
   app.get('/api/public/llm-pricing', verifyApiKey, async (req, res) => {
     try {

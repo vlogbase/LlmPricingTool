@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 
 const app = express();
 app.use(express.json());
@@ -66,5 +67,37 @@ app.use((req, res, next) => {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    
+    // Set up scheduler to check for scheduled price changes
+    // Run every 5 minutes (300000 ms)
+    const checkInterval = 5 * 60 * 1000;
+    
+    // Initial check after server starts (wait 10 seconds to let everything initialize)
+    setTimeout(async () => {
+      try {
+        log('Running initial scheduled price check...');
+        const appliedCount = await storage.applyDueScheduledPrices();
+        if (appliedCount > 0) {
+          log(`Applied ${appliedCount} scheduled price changes during initial check`);
+        } else {
+          log('No scheduled price changes were due during initial check');
+        }
+      } catch (error) {
+        console.error('Error during initial scheduled price check:', error);
+      }
+      
+      // Then set up recurring interval
+      setInterval(async () => {
+        try {
+          log('Running scheduled price check...');
+          const appliedCount = await storage.applyDueScheduledPrices();
+          if (appliedCount > 0) {
+            log(`Applied ${appliedCount} scheduled price changes`);
+          }
+        } catch (error) {
+          console.error('Error checking scheduled prices:', error);
+        }
+      }, checkInterval);
+    }, 10000);
   });
 })();
