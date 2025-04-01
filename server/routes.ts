@@ -422,6 +422,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Cancel a scheduled price change
+  app.post('/api/scheduled-prices/:id/cancel', isAuthenticated, isAuthorized, async (req, res) => {
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Bad request: Invalid ID format" });
+    }
+    
+    try {
+      // Check if the scheduled price exists
+      const scheduledPrice = await storage.getScheduledPriceById(id);
+      if (!scheduledPrice) {
+        return res.status(404).json({ message: `Scheduled price with ID ${id} not found` });
+      }
+      
+      // Cancel the scheduled price change
+      await storage.cancelScheduledPrice(id);
+      
+      res.json({
+        message: "Scheduled price cancelled successfully"
+      });
+    } catch (error) {
+      console.error(`Error cancelling scheduled price ${id}:`, error);
+      res.status(500).json({ message: "Failed to cancel scheduled price" });
+    }
+  });
+  
   // Endpoint to check and apply due scheduled prices
   app.post('/api/scheduled-prices/apply-due', isAuthenticated, isAuthorized, async (req, res) => {
     try {

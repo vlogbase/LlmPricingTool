@@ -3,6 +3,7 @@ import { AuthenticationBanner } from "@/components/AuthenticationBanner";
 import { PricingTable } from "@/components/PricingTable";
 import { APIInformation } from "@/components/APIInformation";
 import { PriceHistory } from "@/components/PriceHistory";
+import { ScheduledChanges } from "@/components/ScheduledChanges";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery } from "@tanstack/react-query";
 
@@ -40,9 +41,14 @@ export default function Home() {
         />
         
         {isAuthorized && (
-          <div className="mt-6">
-            <PriceHistory isAuthorized={isAuthorized} />
-          </div>
+          <>
+            <div className="mt-6">
+              <ScheduledChanges isAuthorized={isAuthorized} />
+            </div>
+            <div className="mt-6">
+              <PriceHistory isAuthorized={isAuthorized} />
+            </div>
+          </>
         )}
       </main>
 

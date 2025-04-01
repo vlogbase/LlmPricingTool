@@ -52,6 +52,7 @@ export interface IStorage {
   getAllScheduledPrices(): Promise<ScheduledPriceDTO[]>;
   getScheduledPriceById(id: number): Promise<ScheduledPrice | undefined>;
   applyScheduledPrice(id: number): Promise<ModelPrice>;
+  cancelScheduledPrice(id: number): Promise<void>; // Cancel a scheduled price change
   applyDueScheduledPrices(): Promise<number>; // Returns count of applied changes
   
   // Price history operations
@@ -335,6 +336,21 @@ export class MemStorage implements IStorage {
     this.scheduledPrices.set(id, scheduledPrice);
     
     return updatedModel;
+  }
+  
+  async cancelScheduledPrice(id: number): Promise<void> {
+    const scheduledPrice = this.scheduledPrices.get(id);
+    
+    if (!scheduledPrice) {
+      throw new Error(`Scheduled price with ID ${id} not found`);
+    }
+    
+    if (scheduledPrice.applied) {
+      throw new Error(`Cannot cancel a scheduled price that has already been applied`);
+    }
+    
+    // Remove the scheduled price
+    this.scheduledPrices.delete(id);
   }
   
   async applyDueScheduledPrices(): Promise<number> {
@@ -692,6 +708,23 @@ export class PostgresStorage implements IStorage {
       .where(eq(scheduledPrices.id, id));
       
     return updatedModel;
+  }
+  
+  async cancelScheduledPrice(id: number): Promise<void> {
+    // Get the scheduled price
+    const scheduledPrice = await this.getScheduledPriceById(id);
+    
+    if (!scheduledPrice) {
+      throw new Error(`Scheduled price with ID ${id} not found`);
+    }
+    
+    if (scheduledPrice.applied) {
+      throw new Error(`Cannot cancel a scheduled price that has already been applied`);
+    }
+    
+    // Delete the scheduled price
+    await this.db.delete(scheduledPrices)
+      .where(eq(scheduledPrices.id, id));
   }
   
   async applyDueScheduledPrices(): Promise<number> {
