@@ -10,14 +10,18 @@ import {
   InsertScheduledPrice,
   ScheduledPrice,
   ScheduledPriceDTO,
+  InsertPriceHistory,
+  PriceHistory,
+  PriceHistoryDTO,
   users,
   models,
   apiKeys,
   priceSettings,
-  scheduledPrices
+  scheduledPrices,
+  priceHistory
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq, and, lte, gt } from "drizzle-orm";
+import { eq, and, lte, gt, desc } from "drizzle-orm";
 import postgres from "postgres";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
@@ -32,7 +36,7 @@ export interface IStorage {
   getModelById(id: string): Promise<ModelPrice | undefined>;
   createModel(model: Omit<ModelPrice, 'lastUpdated'> & { lastUpdated?: string }): Promise<ModelPrice>;
   updateModel(id: string, model: Partial<ModelPrice>): Promise<ModelPrice>;
-  updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice>;
+  updateModelActualPrice(id: string, actualPrice: number, source: string): Promise<ModelPrice>;
   
   // Price settings operations
   getPriceSettings(): Promise<PriceSettingsDTO>;
@@ -49,6 +53,11 @@ export interface IStorage {
   getScheduledPriceById(id: number): Promise<ScheduledPrice | undefined>;
   applyScheduledPrice(id: number): Promise<ModelPrice>;
   applyDueScheduledPrices(): Promise<number>; // Returns count of applied changes
+  
+  // Price history operations
+  createPriceHistory(priceHistory: InsertPriceHistory): Promise<PriceHistory>;
+  getAllPriceHistory(): Promise<PriceHistoryDTO[]>;
+  getPriceHistoryByModel(modelId: string): Promise<PriceHistoryDTO[]>;
   
   // For session storage
   sessionStore: session.Store;
@@ -144,12 +153,20 @@ export class MemStorage implements IStorage {
     return updatedModel;
   }
 
-  async updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice> {
+  async updateModelActualPrice(id: string, actualPrice: number, source: string = 'manual'): Promise<ModelPrice> {
     const existingModel = this.models.get(id);
     
     if (!existingModel) {
       throw new Error(`Model with id ${id} not found`);
     }
+    
+    // Record history before updating
+    await this.createPriceHistory({
+      modelId: id,
+      previousPrice: existingModel.actualPrice,
+      newPrice: actualPrice,
+      changeSource: source
+    });
     
     const updatedModel: ModelPrice = {
       ...existingModel,
@@ -159,6 +176,56 @@ export class MemStorage implements IStorage {
     
     this.models.set(id, updatedModel);
     return updatedModel;
+  }
+  
+  // Price history operations
+  private priceHistory: Map<number, PriceHistory> = new Map();
+  private priceHistoryId: number = 1;
+  
+  async createPriceHistory(priceHistoryData: InsertPriceHistory): Promise<PriceHistory> {
+    const id = this.priceHistoryId++;
+    const changedAt = priceHistoryData.changedAt ? new Date(priceHistoryData.changedAt) : new Date();
+    
+    const history: PriceHistory = {
+      id,
+      modelId: priceHistoryData.modelId,
+      previousPrice: String(priceHistoryData.previousPrice),
+      newPrice: String(priceHistoryData.newPrice),
+      changedAt,
+      changeSource: priceHistoryData.changeSource
+    };
+    
+    this.priceHistory.set(id, history);
+    return history;
+  }
+  
+  async getAllPriceHistory(): Promise<PriceHistoryDTO[]> {
+    const history = Array.from(this.priceHistory.values());
+    const result: PriceHistoryDTO[] = [];
+    
+    for (const h of history) {
+      const model = this.models.get(h.modelId);
+      if (model) {
+        result.push({
+          id: h.id,
+          modelId: h.modelId,
+          modelName: model.name,
+          provider: model.provider,
+          previousPrice: Number(h.previousPrice),
+          newPrice: Number(h.newPrice),
+          changedAt: h.changedAt.toISOString(),
+          changeSource: h.changeSource
+        });
+      }
+    }
+    
+    // Sort by date descending (newest first)
+    return result.sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime());
+  }
+  
+  async getPriceHistoryByModel(modelId: string): Promise<PriceHistoryDTO[]> {
+    const allHistory = await this.getAllPriceHistory();
+    return allHistory.filter(h => h.modelId === modelId);
   }
 
   // API key operations
@@ -259,7 +326,8 @@ export class MemStorage implements IStorage {
     const actualPrice = Number(scheduledPrice.scheduledPrice);
     const updatedModel = await this.updateModelActualPrice(
       scheduledPrice.modelId, 
-      actualPrice
+      actualPrice,
+      'scheduled'
     );
     
     // Mark the scheduled price as applied
@@ -425,7 +493,21 @@ export class PostgresStorage implements IStorage {
     };
   }
 
-  async updateModelActualPrice(id: string, actualPrice: number): Promise<ModelPrice> {
+  async updateModelActualPrice(id: string, actualPrice: number, source: string = 'manual'): Promise<ModelPrice> {
+    // Get the current model to record history
+    const currentModel = await this.getModelById(id);
+    if (!currentModel) {
+      throw new Error(`Model with ID ${id} not found`);
+    }
+    
+    // Record price history before updating
+    await this.createPriceHistory({
+      modelId: id,
+      previousPrice: currentModel.actualPrice,
+      newPrice: actualPrice,
+      changeSource: source
+    });
+    
     const results = await this.db.update(models)
       .set({
         actualPrice: String(actualPrice),
@@ -600,7 +682,8 @@ export class PostgresStorage implements IStorage {
     const actualPrice = Number(scheduledPrice.scheduledPrice);
     const updatedModel = await this.updateModelActualPrice(
       scheduledPrice.modelId,
-      actualPrice
+      actualPrice,
+      'scheduled'
     );
     
     // Mark the scheduled price as applied
@@ -634,6 +717,77 @@ export class PostgresStorage implements IStorage {
     }
     
     return appliedCount;
+  }
+  
+  // Price history operations
+  async createPriceHistory(priceHistoryData: InsertPriceHistory): Promise<PriceHistory> {
+    // Convert to appropriate types for PostgreSQL
+    const values = {
+      modelId: priceHistoryData.modelId,
+      previousPrice: String(priceHistoryData.previousPrice),
+      newPrice: String(priceHistoryData.newPrice),
+      changeSource: priceHistoryData.changeSource,
+      changedAt: priceHistoryData.changedAt ? new Date(priceHistoryData.changedAt) : new Date()
+    };
+    
+    const results = await this.db.insert(priceHistory)
+      .values(values)
+      .returning();
+      
+    return results[0];
+  }
+  
+  async getAllPriceHistory(): Promise<PriceHistoryDTO[]> {
+    // Get all price history entries
+    const results = await this.db.select()
+      .from(priceHistory)
+      .orderBy(desc(priceHistory.changedAt)); // Newest first
+    
+    // Map to DTOs with model information
+    const dtos: PriceHistoryDTO[] = [];
+    
+    for (const history of results) {
+      const model = await this.getModelById(history.modelId);
+      if (model) {
+        dtos.push({
+          id: history.id,
+          modelId: history.modelId,
+          modelName: model.name,
+          provider: model.provider,
+          previousPrice: Number(history.previousPrice),
+          newPrice: Number(history.newPrice),
+          changedAt: history.changedAt.toISOString(),
+          changeSource: history.changeSource
+        });
+      }
+    }
+    
+    return dtos;
+  }
+  
+  async getPriceHistoryByModel(modelId: string): Promise<PriceHistoryDTO[]> {
+    // Get price history entries for specific model
+    const results = await this.db.select()
+      .from(priceHistory)
+      .where(eq(priceHistory.modelId, modelId))
+      .orderBy(desc(priceHistory.changedAt)); // Newest first
+    
+    // Map to DTOs with model information
+    const model = await this.getModelById(modelId);
+    if (!model) {
+      return [];
+    }
+    
+    return results.map(history => ({
+      id: history.id,
+      modelId: history.modelId,
+      modelName: model.name,
+      provider: model.provider,
+      previousPrice: Number(history.previousPrice),
+      newPrice: Number(history.newPrice),
+      changedAt: history.changedAt.toISOString(),
+      changeSource: history.changeSource
+    }));
   }
 }
 

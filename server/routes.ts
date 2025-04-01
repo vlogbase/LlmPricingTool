@@ -139,9 +139,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         } else {
           // Create new model
-          await storage.createModel({
+          const newModel = await storage.createModel({
             ...model,
             lastUpdated: new Date().toISOString()
+          });
+          
+          // Record the initial price setting in history
+          await storage.createPriceHistory({
+            modelId: newModel.id,
+            previousPrice: 0,
+            newPrice: newModel.actualPrice,
+            changeSource: 'initial_creation'
           });
         }
       }
@@ -179,7 +187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update actual prices for the models
       for (const [modelId, price] of Object.entries(actualPrices)) {
         if (typeof price === 'number' && price >= 0) {
-          await storage.updateModelActualPrice(modelId, price);
+          await storage.updateModelActualPrice(modelId, price, 'manual');
         }
       }
       
@@ -427,6 +435,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error applying due scheduled prices:", error);
       res.status(500).json({ message: "Failed to apply due scheduled prices" });
+    }
+  });
+  
+  // Price history endpoints
+  // Get all price history
+  app.get('/api/price-history', isAuthenticated, isAuthorized, async (req, res) => {
+    try {
+      const priceHistory = await storage.getAllPriceHistory();
+      res.json(priceHistory);
+    } catch (error) {
+      console.error("Error getting price history:", error);
+      res.status(500).json({ message: "Failed to retrieve price history" });
+    }
+  });
+
+  // Get price history for a specific model
+  app.get('/api/price-history/model/:modelId', isAuthenticated, isAuthorized, async (req, res) => {
+    const { modelId } = req.params;
+    
+    try {
+      const priceHistory = await storage.getPriceHistoryByModel(modelId);
+      res.json(priceHistory);
+    } catch (error) {
+      console.error(`Error getting price history for model ${modelId}:`, error);
+      res.status(500).json({ message: "Failed to retrieve price history for model" });
     }
   });
   

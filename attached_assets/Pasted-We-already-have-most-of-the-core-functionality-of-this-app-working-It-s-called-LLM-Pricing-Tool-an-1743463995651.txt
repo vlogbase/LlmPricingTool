@@ -1,0 +1,125 @@
+We already have most of the core functionality of this app working. It's called LLM Pricing Tool, and it's designed to:
+Let me monitor current prices for LLM models (my own prices vs OpenRouter's prices)
+
+
+Edit and schedule future price changes
+
+
+Eventually serve data to another app (Gloriamundo)
+
+
+You’ve already implemented:
+Live OpenRouter price fetching
+
+
+My own current and new price settings
+
+
+Scheduling logic (with backend support)
+
+
+A mostly working UI with “Current Prices” and “New Prices” tabs
+
+
+We’ve iterated on this a bit now, and I want to clarify the overall vision and make some changes to bring everything into line.
+
+
+
+💻 UI Layout
+Keep the existing tab-based layout, but expand it slightly to include:
+✅ Current Prices — show:
+
+
+My current price
+
+
+OpenRouter live price
+
+
+Difference (highlight red if OpenRouter is higher than mine)
+
+
+A “refresh” button to manually reload OpenRouter prices
+
+
+✅ New Prices — editable fields for setting new prices
+
+
+At the bottom, instead of scheduling each price individually, show a single "Schedule All Price Changes" button
+
+
+Let me pick a datetime for the change to go live
+
+
+➕ Scheduled Changes tab — list all scheduled changes with:
+
+
+Time they’re set to go live
+
+
+Summary of model prices
+
+
+Cancel button
+
+
+➕ History tab — show:
+
+
+When prices were changed
+
+
+What they were before, and what they became
+
+
+
+⚙️ Backend Enhancements
+Add logic to store and show previous prices and change timestamps
+
+
+Background job already applies scheduled changes — keep this working
+
+
+Allow prices to be retrieved and updated through an API for Gloriamundo, including:
+
+
+GET current prices
+
+
+GET upcoming scheduled change
+
+
+POST manual price change trigger
+
+
+(Protect with API key or allow from gloriamundo.com only)
+
+
+
+🔔 Notifications & PWA
+Add support for in-browser notifications, especially:
+
+
+If a current price is lower than OpenRouter (possible loss)
+
+
+When a scheduled price change is about to go live (e.g. 5 mins before)
+
+
+If possible, make the app installable as a PWA so I can use it on mobile and still receive notifications
+
+
+
+🧹 Summary
+We’re not starting from scratch — we’re just cleaning this up and getting everything aligned. Please:
+Review what already exists
+
+
+Implement/adjust the rest of the features based on this clarified spec
+
+
+Let me know once it’s fully working so I can test everything
+
+
+
+Let me know if you need help testing any part of it or want a feature broken down in more detail.

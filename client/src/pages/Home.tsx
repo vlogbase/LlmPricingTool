@@ -2,13 +2,18 @@ import { AppHeader } from "@/components/AppHeader";
 import { AuthenticationBanner } from "@/components/AuthenticationBanner";
 import { PricingTable } from "@/components/PricingTable";
 import { APIInformation } from "@/components/APIInformation";
+import { PriceHistory } from "@/components/PriceHistory";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery } from "@tanstack/react-query";
 
 export default function Home() {
   const { user, isLoading: authLoading } = useAuth();
   
-  const { data: apiEndpoint, isLoading: endpointLoading } = useQuery({
+  interface EndpointInfo {
+    endpoint: string;
+  }
+  
+  const { data: apiEndpoint = { endpoint: "https://example.com/api/llm-pricing" }, isLoading: endpointLoading } = useQuery<EndpointInfo>({
     queryKey: ['/api/endpoint-info'],
     enabled: !authLoading,
   });
@@ -29,10 +34,16 @@ export default function Home() {
         <PricingTable canEdit={isAuthorized} />
         
         <APIInformation 
-          apiEndpoint={apiEndpoint?.endpoint || "https://example.com/api/llm-pricing"} 
+          apiEndpoint={apiEndpoint.endpoint} 
           isLoading={endpointLoading}
           isAuthorized={isAuthorized}
         />
+        
+        {isAuthorized && (
+          <div className="mt-6">
+            <PriceHistory isAuthorized={isAuthorized} />
+          </div>
+        )}
       </main>
 
       <footer className="bg-white">

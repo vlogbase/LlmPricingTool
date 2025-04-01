@@ -118,3 +118,43 @@ export interface ScheduledPriceDTO {
   effectiveDate: string;
   applied: boolean;
 }
+
+// Price history for tracking changes
+export const priceHistory = pgTable("price_history", {
+  id: serial("id").primaryKey(),
+  modelId: text("model_id").notNull().references(() => models.id, { onDelete: 'cascade' }),
+  previousPrice: numeric("previous_price", { precision: 10, scale: 4 }).notNull(),
+  newPrice: numeric("new_price", { precision: 10, scale: 4 }).notNull(),
+  changedAt: timestamp("changed_at").notNull().defaultNow(),
+  changeSource: text("change_source").notNull() // 'manual', 'scheduled', 'api'
+});
+
+export const insertPriceHistorySchema = createInsertSchema(priceHistory).pick({
+  modelId: true,
+  previousPrice: true, 
+  newPrice: true,
+  changeSource: true
+});
+
+// Define a custom type for price history inserts
+export type InsertPriceHistory = {
+  modelId: string;
+  previousPrice: string | number;
+  newPrice: string | number;
+  changeSource: string;
+  changedAt?: string | Date;
+};
+
+export type PriceHistory = typeof priceHistory.$inferSelect;
+
+// For frontend type safety
+export interface PriceHistoryDTO {
+  id: number;
+  modelId: string;
+  modelName: string;
+  provider: string;
+  previousPrice: number;
+  newPrice: number;
+  changedAt: string;
+  changeSource: string;
+}
